@@ -21,3 +21,6 @@ cd %userprofile%
 mkdir GIT
 cd GIT
 git clone https://github.com/Ulrich1981/python_etl_framework.git
+
+:: set up "git up"
+git config --global alias.up 'pull --rebase --autostash'
