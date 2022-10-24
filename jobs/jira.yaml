@@ -1,0 +1,90 @@
+universal:
+    field_list:
+        key:
+            map: "key"
+            type: text
+            is_key: True
+        summary:
+            map: "fields.summary"
+            type: text
+        type:
+            map: "fields.issuetype.name"
+            type: text
+        status:
+            map: "fields.status.name"
+            type: text
+        reporter:
+            map: "fields.reporter.displayName"
+            type: text
+        due_date:
+            map: "fields.duedate"
+            type: date
+        estimate:
+            map: "fields.timeoriginalestimate"
+            type: text
+        remaining:
+            map: "fields.timeestimate"
+            type: text
+        assignee:
+            map: "fields.assignee.displayName"
+            type: text
+        links:
+            map: "fields.issuelinks"
+            type: text
+        labels:
+            map: "fields.labels"
+            type: text
+        priority:
+            map: "fields.priority.name"
+            type: text
+        created:
+            map: "fields.created"
+            type: timestamp
+        updated:
+            map: "fields.updated"
+            type: timestamp
+        epic_key:
+            map: "fields.customfield_10002"
+            type: text
+        epic_summary:
+            map: "df.merge(df, 'left', left_on='fields.customfield_10002', right_on='key')['fields.summary_y']"
+            type: text
+        parent_key:
+            map: "fields.parent.key"
+            type: text
+        parent_summary:
+            map: "fields.parent.fields.summary"
+            type: text
+        target_date:
+            map: "fields.customfield_10117"
+            type: text
+        wake_up_date:
+            map: "fields.customfield_10115"
+            type: text
+        project_key:
+            map: "fields.project.key"
+            type: text
+        project_name:
+            map: "fields.project.name"
+            type: text
+        project_category_name:
+            map: "fields.project.projectCategory.name"
+            type: text
+    schema: bi_cc
+    table: jira_data
+steps:
+    - name: extract
+      headers:
+          Authorization: "Basic dXd1ZW5zdGVsOistSmFudWFyMjAyMg=="
+      url: "https://<jira-url>/rest/api/2/search?jql=updated>={max_value}\
+        &startAt={start_at}&maxResults={max_results}\
+        &fields=summary,issuetype,status,reporter,duedate,timeoriginalestimate,timeestimate,assignee,issuelinks,labels,priority\
+        ,created,updated,customfield_10002,parent,customfield_10115,customfield_10117,project,projectCategory"
+      max_value: "updated::date::text"
+      default_max_value: "1970-01-01"
+      total_value: total
+      max_results: 1000
+      entries: issues
+      module: rest_extract_module
+    - name: transform
+    - name: load

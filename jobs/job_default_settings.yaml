@@ -1,0 +1,10 @@
+universal:
+    dwh_connection: <connection_name>
+extract:
+    output: pandas_df
+transform:
+    module: pandas_transform_module
+load:
+    input: pandas_df
+    module: rdbs_load_module
+    update_strategy: upsert
