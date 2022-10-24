@@ -15,3 +15,9 @@ python -m pip install psycopg2
 python -m pip install sqlalchemy
 python -m pip install redshift_connector
 python -m pip install pandas
+
+:: download the repository
+cd %userprofile%
+mkdir GIT
+cd GIT
+git clone https://github.com/Ulrich1981/python_etl_framework.git
