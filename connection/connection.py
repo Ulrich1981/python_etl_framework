@@ -4,6 +4,9 @@ from sshtunnel import SSHTunnelForwarder
 
 def get_connection(conn_config):
     type = conn_config["type"]
+    if type == "mysql":
+        import mysql.connector
+        return mysql.connector.connect(**conn_config["db_credentials"])
     if type == "postgres":
         import psycopg2
         return psycopg2.connect(**conn_config["db_credentials"])

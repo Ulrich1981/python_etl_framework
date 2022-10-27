@@ -14,6 +14,7 @@ python -m pip install sshtunnel
 python -m pip install psycopg2
 python -m pip install sqlalchemy
 python -m pip install redshift_connector
+python -m pip install mysql-connector-python
 python -m pip install pandas
 
 :: download the repository
