@@ -16,6 +16,8 @@ python -m pip install sqlalchemy
 python -m pip install redshift_connector
 python -m pip install mysql-connector-python
 python -m pip install pandas
+python -m pip install click
+python -m pip install click-option-group
 
 :: download the repository
 cd %userprofile%

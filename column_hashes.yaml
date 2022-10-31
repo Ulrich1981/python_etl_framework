@@ -1,0 +1,23 @@
+postgres: &postgres
+    bigint: &num sum({column})::numeric/count({column})
+    boolean: &bool sum({column}::int)::numeric/count({column})
+    character varying: &str round(sum(ascii(md5({column})))/count({column})::numeric, 2)
+    date: *str
+    double precision: *num
+    integer: *num
+    numeric: *num
+    real: *num
+    timestamp without time zone: *str
+    timestamp with time zone: *str
+postgres_alchemy: *postgres
+mysql:
+    bigint: *num
+    boolean: *bool
+    character varying: *str
+    date: *str
+    double precision: *num
+    integer: *num
+    numeric: *num
+    real: *num
+    timestamp without time zone: *str
+    timestamp with time zone: *str
