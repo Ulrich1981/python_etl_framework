@@ -1,0 +1,15 @@
+postgres: &postgres
+    all: ''
+    this_month: WHERE ${date} >= DATE_TRUNC('month', CURRENT_DATE)
+    last_month: >
+        WHERE ${date} < DATE_TRUNC('month', CURRENT_DATE)
+        AND ${date} >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1' MONTH)
+    before_last_month: WHERE ${date} < DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1' MONTH)
+postgres_alchemy: *postgres
+mysql:
+    all: ''
+    this_month: WHERE ${date} >= DATE_FORMAT(CURDATE(),'%Y-%m-01')
+    last_month: >
+        WHERE ${date} < DATE_FORMAT(CURDATE(),'%Y-%m-01')
+        AND ${date} >= DATE_FORMAT(CURDATE() - INTERVAL 1 MONTH,'%Y-%m-01')
+    before_last_month: WHERE ${date} < DATE_FORMAT(CURDATE() - INTERVAL 1 MONTH,'%Y-%m-01')

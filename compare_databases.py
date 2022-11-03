@@ -12,7 +12,9 @@ import yaml
 import string
 import click
 import re
+from datetime import datetime
 
+NOW = datetime.now().replace(microsecond=0).isoformat().replace(":","_")
 
 @click.group()
 def cli():
@@ -34,8 +36,10 @@ def get_schemas(dwh_name):
     )
 
 
-def get_columns(dwh_name, table_where, table_regex = "(.*)"):
+def get_columns(dwh_name, filter_options, table_regex = "(.*)"):
     """fetch a list of all columns in all tables"""
+
+    table_where = get_table_where(filter_options)
     sql_statement = f"""
         SELECT
             t.table_schema AS schema_name,
@@ -53,14 +57,17 @@ def get_columns(dwh_name, table_where, table_regex = "(.*)"):
     df_out = sql_extract_module.extract(
         {"sql_statement": sql_statement, "dwh_connection": dwh_name}
     )
-    df_out["table_join"] = df_out["table_name"].str.extract(table_regex)
+    df_out["table_join"] = ("" if filter_options["ignore_schema"]
+                               else df_out["schema_name"] + ".") + \
+                               df_out["table_name"].str.extract(table_regex)[0]
 
-
-   with open("connection/db_config.yaml", "r") as db_config_stream:
+    with open("connection/db_config.yaml", "r") as db_config_stream:
         db_type = yaml.load(db_config_stream, Loader=yaml.Loader)[dwh_name]["type"]
         with open("column_hashes.yaml", "r") as column_hashes_stream:
             column_hashes = yaml.load(column_hashes_stream, Loader=yaml.Loader)[db_type]
-    df_out["column_cast"].apply(lambda column: column_hashes.format(column=column))
+
+    df_out["column_cast"] = (df_out.apply(lambda row: column_hashes[row["data_type"]]
+                                  .format(column=row["column_name"]), axis=1))
     return df_out
 
 
@@ -84,7 +91,7 @@ def get_tables(columns, add_special_columns=False):
     """Get a df with all tables from the df with all columns"""
     if add_special_columns:
         return (
-            columns.groupby(["table_name", "schema_name"])
+            columns.groupby(["table_name", "table_join", "schema_name"])
             .apply(get_special_columns)
             .reset_index()
         )
@@ -95,57 +102,88 @@ def get_tbl_checksum(row, dwh_name, where=""):
     """Calculate a checksum from all columns in a table"""
     sql_statement = f"""
         SELECT
-            {row["column_cast"]}
+            count(*) as count_rows, {row["column_cast"].iloc[0]}
         FROM
-            {row["schema_name"]}.{row["table_name"]}
+            {row["schema_name"].iloc[0]}.{row["table_name"].iloc[0]}
         {where}"""
     return sql_extract_module.extract(
         {
             "sql_statement": sql_statement,
             "dwh_connection": dwh_name,
-            "output": "single_value",
         }
     )
 
 
-def get_all_checksums(tables, where, filter_options):
-    for dwh_name in tables:
-        for index, row in tables[dwh_name].iterrows():
-            date = row["date_column"]
-            where = string.Template(where).substitute(date=date) if date else ""
-            tables[dwh_name].at[index, "checksum"] = get_tbl_checksum(row, dwh_name, where)
+def get_tbl_compare(row0, row1, where_key):
+    m = {"all": "all",
+         "this_month": "m-0",
+         "last_month": "m-1",
+         "before_last_month": "< m-1"}[where_key]
+    row0 = row0 - row1
+    count_diff = row0.loc[0]["count_rows"]
+    row0 = row0.drop("count_rows", axis=1).transpose()
+    col_list = ", ".join(row0[row0[0] != 0].transpose().keys())
+    return {"column list with differences "+m:col_list,
+            "difference count(left table-right table) "+m:count_diff}
 
-    return compare_datasets(tables, "tables", filter_options)
 
 
-def compare_datasets(data, item, filter_options, print_results = True):
+def get_all_checksums(tables, filter_options):
+    where_keys = ["all", "this_month", "last_month", "before_last_month"]
+    dwh_list = filter_options["dwh_list"]
+    rows_out = {}
+    where = {}
+    df_out = pd.DataFrame()
+    for dwh_name in dwh_list:
+        with open("connection/db_config.yaml", "r") as db_config_stream:
+            db_type = yaml.load(db_config_stream, Loader=yaml.Loader)[dwh_name]["type"]
+            with open("compare_where_statements.yaml", "r") as compare_where_statements:
+                compare_where_statements = yaml.load(compare_where_statements, Loader=yaml.Loader)[db_type]
+        where[dwh_name] = compare_where_statements
+
+    for table_join in tables[dwh_list[0]]["table_join"]:
+        compare_all = {}
+        compare_all["table_join"] = table_join
+        for where_key in where_keys:
+            for dwh_name in dwh_list:
+                row = tables[dwh_name][tables[dwh_name]["table_join"] == table_join]
+                date = row["date_column"].iloc[0]
+                filter_where = string.Template(where[dwh_name][where_key]).substitute(date=date) if date else ""
+                rows_out[dwh_name] = get_tbl_checksum(row, dwh_name, filter_where)
+            if date or where_key == "all":
+                compare = get_tbl_compare(rows_out[dwh_list[0]], 
+                                          rows_out[dwh_list[1]],
+                                          where_key)
+                compare_all = {**compare_all, **compare}
+        df_out = df_out.append(compare_all, ignore_index=True)
+    return df_out
+
+
+def compare_datasets(data, item, filter_options):
     """Two df are compared with each other.
 
        return: all rows, that are in both df."""
     [(dwh_name0, df0), (dwh_name1, df1)] = data.items()
-    df_left = prune_df(df0, df1, filter_options, keep="left_only")[0].to_string()
-    df_right = prune_df(df1, df0, filter_options, keep="left_only")[0].to_string()
-    if len(df_left) == 0 and len(df_right) == 0:
-        print_out = f"{item} is equal on both sides"
-    else:
-        print_out = f"""
-{item} is not equal on both sides.
-Here are the entries in {dwh_name0}, that do not exist in {dwh_name1}:
 
-{df_left}
-
-And here are the entries in {dwh_name1}, that do not exist in {dwh_name0}:
-
-{df_right}
-
-
-        """
-    if print_results:
-        print(print_out)
+    df_print = prune_df(df0, df1, filter_options, keep="all").loc[lambda x: x["_merge"] != 'both']
+    if "schema_name" in df_print:
+        df_print["schema_name_x"] = df_print["schema_name"]
+        df_print["schema_name_y"] = df_print["schema_name"]
+    df_print["schema.table left"] = df_print["schema_name_x"] + "." + df_print["table_name_x"]
+    df_print["schema.table right"] = df_print["schema_name_y"] + "." + df_print["table_name_y"]
+    df_print = (df_print.groupby(["table_join"])
+                   .agg(lambda x: ",".join(x.dropna().unique().astype(str))).reset_index())
+    df_print["columns only left table"] = df_print[df_print["_merge"] == "left_only"]["column_name"] if "column_name" in df_print else None
+    df_print["columns only right table"] = df_print[df_print["_merge"] == "right_only"]["column_name"] if "column_name" in df_print else None
+    df_print = df_print[["table_join",
+                         "schema.table left",
+                         "schema.table right",
+                         "columns only left table",
+                         "columns only right table"]]
 
     df_pruned = prune_df(df0, df1, filter_options)
     data_out = {dwh_name0: df_pruned[0], dwh_name1: df_pruned[1]}
-    return data_out, print_out
+    return data_out, df_print
 
 
 def prune_df(df1, df2, filter_options = {}, keep="both"):
@@ -155,11 +193,12 @@ def prune_df(df1, df2, filter_options = {}, keep="both"):
     if "column_cast" in join_list:
         join_list = join_list.drop("column_cast")
     join_list = list(join_list)
+    df_out = df1.merge(df2, how="outer", indicator=True, on = join_list)
+    if keep == "all":
+        return df_out
 
-    df_out = (df1.merge(df2, how="outer", indicator=True, on = join_list)
-        .loc[lambda x: x["_merge"] == keep].drop(columns=["_merge"]))
+    df_out = df_out.loc[lambda x: x["_merge"] == keep].drop(columns=["_merge"])
 
-    print(df_out)
     """return: sub df of the two input df"""
     df1_pruned = df_out.rename(columns=lambda x: re.sub('_x','',x))[df1.keys()].drop_duplicates()
     df2_pruned = df_out.rename(columns=lambda x: re.sub('_y','',x))[df2.keys()].drop_duplicates()
@@ -167,7 +206,7 @@ def prune_df(df1, df2, filter_options = {}, keep="both"):
     return [df1_pruned, df2_pruned]
 
 
-def compare_columns_and_tables(dwh_list, table_where, filter_options, print_results = True):
+def compare_columns_and_tables(dwh_list, filter_options):
     """
     In order to compare only the necessary parts per entity, the following is done:
     (Note: every COMPARE step also prunes the compared entity)
@@ -187,14 +226,14 @@ def compare_columns_and_tables(dwh_list, table_where, filter_options, print_resu
 
     for dwh_name in dwh_list:
         #  1.
-        columns[dwh_name] = get_columns(dwh_name, table_where, regex_list[dwh_name])
+        columns[dwh_name] = get_columns(dwh_name, filter_options, regex_list[dwh_name])
         columns[dwh_name] = (columns[dwh_name].loc[columns[dwh_name]
                                 .table_name.str.contains(regex_list[dwh_name]), :])
         #  2.
         tables[dwh_name] = get_tables(columns[dwh_name])
 
     #  3.
-    tables, tbl_print = compare_datasets(tables, "tables", filter_options, print_results)
+    tables, df_print = compare_datasets(tables, "tables", filter_options)
     #  4.
     for dwh_name in dwh_list:
         columns[dwh_name], tables[dwh_name] = prune_df(
@@ -202,11 +241,10 @@ def compare_columns_and_tables(dwh_list, table_where, filter_options, print_resu
         )
 
     #  5.
-    columns, col_print = compare_datasets(columns, "columns", filter_options, print_results)
+    columns, df_col_print = compare_datasets(columns, "columns", filter_options)
+    df_print = df_print.append(df_col_print, ignore_index=True)
 
-    if print_results:
-        return tables, columns
-    return tables, columns, tbl_print, col_print
+    return tables, columns, df_print
 
 
 @cli.command()
@@ -232,18 +270,12 @@ def compare_columns_and_tables(dwh_list, table_where, filter_options, print_resu
               is_flag=True,
               help="Compare the tables only by name and not by schema.",
               required=False)
-def compare_all_columns(dwh_list, print_results = True, **filter_options):
+def compare_all_columns(dwh_list, **filter_options):
 
     dwh_list = dwh_list.replace(" ","").split(',') if type(dwh_list) is str else dwh_list
-    table_where = get_table_where(filter_options)
 
-    tables, columns, tbl_print, col_print = compare_columns_and_tables(dwh_list,
-                                                               table_where,
-                                                               filter_options,
-                                                               print_results = False)
-    if print_results:
-        print(col_print)
-    return columns
+    tables, columns, df_print = compare_columns_and_tables(dwh_list, filter_options)
+    df_print.drop("table_join", axis=1).to_csv(f"comparison_results_{NOW}.csv", index=False)
 
 
 @cli.command()
@@ -269,44 +301,7 @@ def compare_all_columns(dwh_list, print_results = True, **filter_options):
               is_flag=True,
               help="Compare the tables only by name and not by schema.",
               required=False)
-def compare_all_tables(dwh_list, print_results = True, **filter_options):
-
-    dwh_list = dwh_list.replace(" ","").split(',') if type(dwh_list) is str else dwh_list
-    table_where = get_table_where(filter_options)
-
-    tables, columns, tbl_print, col_print = compare_columns_and_tables(dwh_list,
-                                                               table_where,
-                                                               filter_options,
-                                                               print_results = False)
-    if print_results:
-        print(tbl_print)
-    return tables
-
-
-@cli.command()
-@click.option("-d", "--dwh_list",
-              default="DWH_SINGLE, DWH_MULTI",
-              help="The list of the two DWH aliases of the form '..., ...'")
-@click.option("-s", "--schemas",
-              help="The list of the common schemas to be checked of the form '..., ...'. Leave blank, if all schemas should be used.",
-              required=False)
-@click.option("-t", "--tables",
-              help="The list of the common tables to be checked of the form '..., ...'. Leave blank, if all tables should be used.",
-              required=False)
-@click.option("-y", "--table_type",
-              help="The table types ('VIEW', 'BASE TABLE') to be checked. Leave blank, if both types should be used.",
-              required=False)
-@click.option("-lx", "--left_table_regex",
-              help="Use only the capture group from a regex for the table names of the left database.",
-              required=False)
-@click.option("-rx", "--right_table_regex",
-              help="Use only the capture group from a regex for the table names of the right database.",
-              required=False)
-@click.option("-i", "--ignore_schema",
-              is_flag=True,
-              help="Compare the tables only by name and not by schema.",
-              required=False)
-def complete_compare(dwh_list, **filter_options):
+def complete_compare(**filter_options):
     """
     In order to compare only the necessary parts per entity, the following is done:
     (Note: every COMPARE step also prunes the compared entity)
@@ -323,24 +318,24 @@ def complete_compare(dwh_list, **filter_options):
     10. COMPARE the HASHES COMPLETE per table
     """
 
-    dwh_list = dwh_list.replace(" ","").split(',') if type(dwh_list) is str else dwh_list
+    filter_options["dwh_list"] = (filter_options["dwh_list"].replace(" ","").split(',')
+                    if type(filter_options["dwh_list"]) is str
+                    else filter_options["dwh_list"])
     table_where = get_table_where(filter_options)
 
     #  1. - 5.
-    tables, columns = compare_columns_and_tables(dwh_list, table_where, filter_options = filter_options)
+    tables, columns, df_print = compare_columns_and_tables(filter_options["dwh_list"],
+                                                 filter_options = filter_options)
     #  6. + 7.
-    tables = get_tables(columns_merged, add_special_columns=True)
-    #  8.
-    WHERE = """WHERE ${date} < DATE_TRUNC('month', CURRENT_DATE)
-            AND ${date} >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1' MONTH)
-            """
-    tables = get_all_checksums(tables, WHERE, filter_options = filter_options)
-    #  9.
-    WHERE ="WHERE ${date} < DATE_TRUNC('month', CURRENT_DATE)"
-    tables = get_all_checksums(tables, WHERE, filter_options = filter_options)
-    # 10.
-    tables = get_all_checksums(tables, filter_options = filter_options)
+    
+    for dwh_name in filter_options["dwh_list"]:
+        tables[dwh_name] = get_tables(columns[dwh_name], add_special_columns=True)
 
+    #  8. - 10.
+    df_print = df_print.merge(
+                   get_all_checksums(tables, filter_options = filter_options),
+                   how="outer")
+    df_print.drop("table_join", axis=1).to_csv(f"comparison_results_{NOW}.csv", index=False)
 
 @cli.command()
 def main():

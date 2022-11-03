@@ -1,7 +1,7 @@
 postgres: &postgres
-    bigint: &num sum({column})::numeric/count({column})
-    boolean: &bool sum({column}::int)::numeric/count({column})
-    character varying: &str round(sum(ascii(md5({column})))/count({column})::numeric, 2)
+    bigint: &num round(sum("{column}")::numeric/count("{column}"), 2) as "{column}"
+    boolean: &bool round(sum("{column}"::int)::numeric/count("{column}"), 2) as "{column}"
+    character varying: &str round(sum(ascii(md5("{column}")))/count("{column}")::numeric, 2) as "{column}"
     date: *str
     double precision: *num
     integer: *num
@@ -11,13 +11,24 @@ postgres: &postgres
     timestamp with time zone: *str
 postgres_alchemy: *postgres
 mysql:
-    bigint: *num
-    boolean: *bool
-    character varying: *str
-    date: *str
-    double precision: *num
-    integer: *num
-    numeric: *num
-    real: *num
-    timestamp without time zone: *str
-    timestamp with time zone: *str
+    varchar: &str_mysql round(sum(ascii(md5("{column}")))/count("{column}"), 2) as "{column}"
+    bigint: &num_mysql round(sum("{column}")/count("{column}"), 2) as "{column}"
+    longtext: *str_mysql
+    datetime: *str_mysql
+    int: *num_mysql
+    tinyint: *num_mysql
+    decimal: *num_mysql
+    double: *num_mysql
+    float: *num_mysql
+    date: *str_mysql
+    smallint: *num_mysql
+    char: *str_mysql
+    text: *str_mysql
+    timestamp: *str_mysql
+    json: *str_mysql
+    binary: *str_mysql
+    tinytext: *str_mysql
+    mediumint: *num_mysql
+    mediumtext: *str_mysql
+    blob: *str_mysql
+    time: *str_mysql
