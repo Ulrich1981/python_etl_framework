@@ -142,6 +142,7 @@ def get_all_checksums(tables, filter_options):
         where[dwh_name] = compare_where_statements
 
     for table_join in tables[dwh_list[0]]["table_join"]:
+        print(table_join)
         compare_all = {}
         compare_all["table_join"] = table_join
         for where_key in where_keys:
@@ -159,13 +160,15 @@ def get_all_checksums(tables, filter_options):
     return df_out
 
 
-def compare_datasets(data, item, filter_options):
+def compare_datasets(data, item, filter_options, set_type  = "columns"):
     """Two df are compared with each other.
 
        return: all rows, that are in both df."""
     [(dwh_name0, df0), (dwh_name1, df1)] = data.items()
 
-    df_print = prune_df(df0, df1, filter_options, keep="all").loc[lambda x: x["_merge"] != 'both']
+    df_print = prune_df(df0, df1, filter_options, keep="all")
+    if set_type == "columns":
+        df_print = df_print.loc[lambda x: x["_merge"] != 'both']
     if "schema_name" in df_print:
         df_print["schema_name_x"] = df_print["schema_name"]
         df_print["schema_name_y"] = df_print["schema_name"]
@@ -175,9 +178,12 @@ def compare_datasets(data, item, filter_options):
                    .agg(lambda x: ",".join(x.dropna().unique().astype(str))).reset_index())
     df_print["columns only left table"] = df_print[df_print["_merge"] == "left_only"]["column_name"] if "column_name" in df_print else None
     df_print["columns only right table"] = df_print[df_print["_merge"] == "right_only"]["column_name"] if "column_name" in df_print else None
-    df_print = df_print[["table_join",
+    if set_type == "tables":
+        df_print = df_print[["table_join",
                          "schema.table left",
-                         "schema.table right",
+                         "schema.table right"]]
+    else:
+        df_print = df_print[["table_join",
                          "columns only left table",
                          "columns only right table"]]
 
@@ -187,12 +193,9 @@ def compare_datasets(data, item, filter_options):
 
 
 def prune_df(df1, df2, filter_options = {}, keep="both"):
-    join_list = df2.keys().drop("table_name")
-    if filter_options["ignore_schema"] and "schema_name" in join_list:
-        join_list = join_list.drop("schema_name")
-    if "column_cast" in join_list:
-        join_list = join_list.drop("column_cast")
-    join_list = list(join_list)
+    join_list = ["table_join"]
+    if "column_name" in df2.keys():
+        join_list += ["column_name", "data_type"]
     df_out = df1.merge(df2, how="outer", indicator=True, on = join_list)
     if keep == "all":
         return df_out
@@ -233,7 +236,7 @@ def compare_columns_and_tables(dwh_list, filter_options):
         tables[dwh_name] = get_tables(columns[dwh_name])
 
     #  3.
-    tables, df_print = compare_datasets(tables, "tables", filter_options)
+    tables, df_print = compare_datasets(tables, "tables", filter_options, set_type = "tables")
     #  4.
     for dwh_name in dwh_list:
         columns[dwh_name], tables[dwh_name] = prune_df(
@@ -242,7 +245,9 @@ def compare_columns_and_tables(dwh_list, filter_options):
 
     #  5.
     columns, df_col_print = compare_datasets(columns, "columns", filter_options)
-    df_print = df_print.append(df_col_print, ignore_index=True)
+    
+    df_print = df_print.merge(df_col_print, how="outer")
+    #df_print = df_print.append(df_col_print, ignore_index=True)
 
     return tables, columns, df_print
 

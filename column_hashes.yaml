@@ -1,7 +1,7 @@
 postgres: &postgres
-    bigint: &num round(sum("{column}")::numeric/count("{column}"), 2) as "{column}"
-    boolean: &bool round(sum("{column}"::int)::numeric/count("{column}"), 2) as "{column}"
-    character varying: &str round(sum(ascii(md5("{column}")))/count("{column}")::numeric, 2) as "{column}"
+    bigint: &num round(avg("{column}"::real), 2) as "{column}"
+    boolean: &bool round(avg("{column}"::int::real), 2) as "{column}"
+    character varying: &str round(avg(ascii(md5("{column}"))::real), 2) as "{column}"
     date: *str
     double precision: *num
     integer: *num
