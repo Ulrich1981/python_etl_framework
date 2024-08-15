@@ -156,7 +156,7 @@ def get_all_checksums(tables, filter_options):
                                           rows_out[dwh_list[1]],
                                           where_key)
                 compare_all = {**compare_all, **compare}
-        df_out = df_out.append(compare_all, ignore_index=True)
+        df_out = pd.concat([df_out, pd.DataFrame([compare_all])], ignore_index=True)
     return df_out
 
 
